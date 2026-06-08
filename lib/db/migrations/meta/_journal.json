@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1778850679306,
+      "tag": "0000_cultured_human_fly",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778853600000,
+      "tag": "0001_add_temp_password",
+      "breakpoints": true
+    }
+  ]
+}
