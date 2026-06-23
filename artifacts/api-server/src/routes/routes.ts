@@ -459,7 +459,9 @@ async function parsePdfInvoice(
     if (pm) { productType = pm[1].trim(); packType = pm[2].trim(); }
     else { const lc = before.match(/([A-Z])$/); if (lc) { packType = lc[1]; productType = before.slice(0, -1).trim(); } else productType = before.trim(); }
     const packSize = sizeStr.replace(/\s+/g, " ").replace(/\s*\/\s*/g, " / ").trim();
-    const [qtyCases, qtyBottles] = splitQty(after.replace(/\D/g, ""), qtyPerCase);
+    const rawDigits = after.replace(/\D/g, "");
+    const [qtyCases, qtyBottles] = splitQty(rawDigits, qtyPerCase);
+    console.log(`[PDF splitQty CaseA] size="${packSize}" qpc=${qtyPerCase} after="${after}" digits="${rawDigits}" → cases=${qtyCases} bottles=${qtyBottles}`);
     return { productType, packType, packSize, qtyCases, qtyBottles };
   };
 
@@ -520,7 +522,6 @@ async function parsePdfInvoice(
         const p = parseBefore(before);
         brandName = p.brandName; productType = p.productType; packType = p.packType;
         packSize = sm[0].replace(/\s+/g, " ").replace(/\s*\/\s*/g, " / ").trim();
-       // [qtyCases, qtyBottles] = splitQty(after.replace(/\D/g, ""), qtyPerCase);
         const rawDigitsB = after.replace(/\D/g, "");
         [qtyCases, qtyBottles] = splitQty(rawDigitsB, qtyPerCase);
         console.log(`[PDF splitQty CaseB] size="${packSize}" qpc=${qtyPerCase} after="${after}" digits="${rawDigitsB}" → cases=${qtyCases} bottles=${qtyBottles}`);
