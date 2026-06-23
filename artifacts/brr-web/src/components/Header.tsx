@@ -1,5 +1,6 @@
-import { Search, Bell, User, Menu } from "lucide-react";
+import { Search, Bell, User, Menu, Store } from "lucide-react";
 import { useLocation } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -7,6 +8,8 @@ interface HeaderProps {
 
 export function Header({ onMenuClick }: HeaderProps) {
   const [location] = useLocation();
+  const { user } = useAuth();
+  const shopName = user?.shopName || "";
 
   const getTitle = () => {
     if (location === "/") return "Dashboard";
@@ -36,6 +39,16 @@ export function Header({ onMenuClick }: HeaderProps) {
           </div>
         </div>
       </div>
+
+      {/* Center — Shop name + Tab name (logo-style gradient) */}
+      {shopName && (
+        <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 hidden md:flex items-center gap-2 rounded-full px-5 py-2 shadow-md border border-white/20 bg-gradient-to-br from-blue-900 via-red-700 to-red-900">
+          <Store className="w-5 h-5 text-white drop-shadow" />
+          <span className="text-lg lg:text-2xl font-display font-bold whitespace-nowrap bg-gradient-to-r from-blue-300 via-red-300 to-gray-300 bg-clip-text text-transparent drop-shadow-sm">
+            {shopName} Wines {getTitle()}
+          </span>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 lg:gap-4">
         <div className="relative hidden lg:block group">

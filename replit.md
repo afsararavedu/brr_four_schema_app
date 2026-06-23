@@ -64,7 +64,7 @@ lib/
 - The replit.md mentions `zod/v4` but the workspace actually uses `zod` v3 (`^3.25.76`)
 - The frontend's `@shared/*` alias resolves to `artifacts/brr-web/src/shared/` (local type copies, no backend imports)
 - Session store uses `connect-pg-simple` (PostgreSQL-backed sessions)
-- **Shop selection landing page**: The app starts at `/` with a full-screen shop selector (Balaji, Jyothi, Padma, Mallanna). Selecting a shop navigates to `/login?shop=<name>` which shows "Welcome to <Shop Name>" above the login form. After login, admins go to `/home`, employees to `/sales`. A "← Change shop" link returns to the landing page.
+- **Shop selection landing page**: The app starts at `/` with a full-screen shop selector (Balaji, Jyothi, Shilpa, Mallanna). Selecting a shop navigates to `/login?shop=<name>` which shows "Welcome to <Shop Name>" above the login form. After login, admins go to `/home`, employees to `/sales`. A "← Change shop" link returns to the landing page.
 - **Multi-tenant DB schema routing**: Each shop maps to its own PostgreSQL schema (`balaji_schema`, `jyothi_schema`, `padma_schema`, `mallanna_schema`). At login the chosen schema is bootstrapped (CREATE SCHEMA IF NOT EXISTS + migrations) if not yet initialised, then stored in `req.session.shopSchema`. A per-request middleware (`runInSchema`) sets an AsyncLocalStorage context, and the exported `db` and `pool` in `db.ts` are Proxies that transparently route all queries to the correct per-shop pool. The session store always uses `mainPool` (the default `DB_SCHEMA` pool) so sessions are stable across shop switches.
 - Password expiry: every user row carries `password_changed_at`. The api
   exposes a server-computed `passwordExpired` boolean on `/api/login` and
@@ -75,10 +75,35 @@ lib/
 - **Voice input on Sales page**: A "Voice" button in the toolbar uses the browser's Web Speech API (`SpeechRecognition`/`webkitSpeechRecognition`) for hands-free data entry. Supported commands: dictate brand number + size + closing cases/bottles/breakage to update a row; "save sales" to save; "save and submit" to save + submit; date commands like "select today" or "first December 2025" to change the date picker. The feature requires a browser that supports the Web Speech API (Chrome, Edge, Safari).
 - Initial admin bootstrap: on first startup against an empty `users` table the api-server creates a single `admin` account. The password comes from `ADMIN_BOOTSTRAP_PASSWORD` if that env var is set (must be ≥ 8 characters), otherwise a random one is generated and printed once to the server log. The account is created with `mustResetPassword: true`, so the operator is forced to set a real password on first login. No other accounts (including any "employee" account) are seeded — additional users must be created from inside the app by an admin.
 
-## Deploying to AWS EC2
+## Deploying to Hostinger / VPS
 
-A self-hosted alternative to Replit publishing. See `docs/deploy/aws-ec2.md` for
-the full runbook (EC2 + RDS Postgres + nginx + systemd). Supporting files:
+**API-only update** (after any code change on Replit):
+```bash
+# On Hostinger as root:
+su - brr -c "cd /opt/brr/repo && git pull origin main" \
+  && cp /opt/brr/repo/artifacts/api-server/dist/index.mjs /opt/brr/repo/release/api/dist/index.mjs \
+  && systemctl restart brr-api \
+  && echo "Done"
+```
+
+> `artifacts/api-server/dist/*.mjs` is now committed to git (un-ignored via
+> `artifacts/api-server/.gitignore`), so `git pull` always brings the latest build.
+> No server-side pnpm/build step needed.
+
+**Web-only update** (after frontend changes on Replit — requires running
+`build-release.sh` locally first to produce `release/web/`):
+```bash
+cp -R release/web/. /var/www/brr-web/ && chown -R www-data:www-data /var/www/brr-web/
+```
+
+**Full rebuild** (if you change the gitignore or want a clean build):
+```bash
+# On Replit:
+pnpm --filter @workspace/api-server run build
+# Then commit + push, then git pull on server
+```
+
+See `docs/deploy/aws-ec2.md` for the original full runbook. Supporting files:
 
 - `scripts/deploy/build-release.sh` — produces a `release/` folder with the
   api-server bundle (`release/api/`) and the static web build (`release/web/`).

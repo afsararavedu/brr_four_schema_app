@@ -33,7 +33,7 @@ const BOOTSTRAP_URL =
 export const SHOP_SCHEMA_MAP: Record<string, string> = {
   Balaji:   "balaji_schema",
   Jyothi:   "jyothi_schema",
-  Padma:    "padma_schema",
+  Shilpa:   "padma_schema",
   Mallanna: "mallanna_schema",
 };
 

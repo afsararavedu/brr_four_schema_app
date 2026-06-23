@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 
-export const SHOPS = ["Balaji", "Jyothi", "Padma", "Mallanna"] as const;
+export const SHOPS = ["Balaji", "Jyothi", "Shilpa", "Mallanna"] as const;
 export type ShopName = (typeof SHOPS)[number];
 
 export default function ShopSelectPage() {

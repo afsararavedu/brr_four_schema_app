@@ -88,6 +88,7 @@ export type User = {
   username: string;
   role: string;
   passwordChangedAt: string | Date | null;
+  shopName?: string | null;
 };
 export type InsertUser = Omit<User, 'id'>;
 
