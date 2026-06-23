@@ -415,9 +415,28 @@ async function parsePdfInvoice(
   const sizeRe = /\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?\s*(?:ml|ltrs?|ltr?|litre?s?)/gi;
 
   // Split concatenated qty string (e.g. "680" → 68 cases, 0 bottles).
-  // qty_bottles is 0–11; tries 2-digit split if last-2 digits are 10–11, else 1-digit split.
-  const splitQty = (digits: string): [number, number] => {
+  // qtyPerCase is the pack size (e.g. 48 for "48 / 180 ml"). Bottles must be
+  // in range 0..(qtyPerCase-1). We take the minimum digits from the right that
+  // form a valid bottle count; anything larger in that slot is treated as part
+  // of the cases count. This correctly handles packs like 48/180ml where bottles
+  // can be 2 digits (0–47), which the old 1-digit-only logic mis-split.
+  const splitQty = (digits: string, qtyPerCase?: number): [number, number] => {
     if (!digits || digits.length <= 1) return [parseInt(digits) || 0, 0];
+
+    if (qtyPerCase && qtyPerCase > 1) {
+      const maxBottles = qtyPerCase - 1;
+      const bottleDigits = String(maxBottles).length; // e.g. 48 → maxBottles=47 → 2 digits
+      if (digits.length > bottleDigits) {
+        const bottlesCandidate = parseInt(digits.slice(-bottleDigits));
+        if (bottlesCandidate < qtyPerCase) {
+          return [parseInt(digits.slice(0, -bottleDigits)) || 0, bottlesCandidate];
+        }
+      }
+      // bottlesCandidate was >= qtyPerCase (impossible bottle count) — fall back to 1-digit
+      return [parseInt(digits.slice(0, -1)) || 0, parseInt(digits.slice(-1)) || 0];
+    }
+
+    // Legacy fallback when pack size is unknown
     const last2 = parseInt(digits.slice(-2));
     if (digits.length >= 3 && last2 >= 10 && last2 <= 11)
       return [parseInt(digits.slice(0, -2)) || 0, last2];
@@ -432,12 +451,15 @@ async function parsePdfInvoice(
     const sizeStr = sm[0];
     const before = rl.substring(0, sm.index).trim();
     const after  = rl.substring(sm.index + sizeStr.length).trim();
+    // Extract qty_per_case from size string like "48 / 180 ml" → 48
+    const qpcMatch = sizeStr.match(/^(\d+)\s*\//);
+    const qtyPerCase = qpcMatch ? parseInt(qpcMatch[1]) : undefined;
     const pm = before.match(/^(Beer|IML|IMFL|Wine|RTD|Duty\s*Paid|Duty\s*Free)\s*([A-Z])$/i);
     let productType = "", packType = "";
     if (pm) { productType = pm[1].trim(); packType = pm[2].trim(); }
     else { const lc = before.match(/([A-Z])$/); if (lc) { packType = lc[1]; productType = before.slice(0, -1).trim(); } else productType = before.trim(); }
     const packSize = sizeStr.replace(/\s+/g, " ").replace(/\s*\/\s*/g, " / ").trim();
-    const [qtyCases, qtyBottles] = splitQty(after.replace(/\D/g, ""));
+    const [qtyCases, qtyBottles] = splitQty(after.replace(/\D/g, ""), qtyPerCase);
     return { productType, packType, packSize, qtyCases, qtyBottles };
   };
 
@@ -493,10 +515,12 @@ async function parsePdfInvoice(
       if (sm) {
         const before = inlineSuffix.substring(0, sm.index);
         const after  = inlineSuffix.substring(sm.index + sm[0].length);
+        const qpcMatch = sm[0].match(/^(\d+)\s*\//);
+        const qtyPerCase = qpcMatch ? parseInt(qpcMatch[1]) : undefined;
         const p = parseBefore(before);
         brandName = p.brandName; productType = p.productType; packType = p.packType;
         packSize = sm[0].replace(/\s+/g, " ").replace(/\s*\/\s*/g, " / ").trim();
-        [qtyCases, qtyBottles] = splitQty(after.replace(/\D/g, ""));
+        [qtyCases, qtyBottles] = splitQty(after.replace(/\D/g, ""), qtyPerCase);
       }
     }
 
@@ -1354,7 +1378,12 @@ export async function registerRoutes(
           field: err.errors[0].path.join("."),
         });
       }
-      throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const cause = (err as any)?.cause;
+      const pgMsg = cause instanceof Error ? cause.message : (cause ? String(cause) : undefined);
+      const displayMsg = pgMsg ? `${msg} | cause: ${pgMsg}` : msg;
+      logger.error({ err, route: "POST /api/sales/bulk", pgError: pgMsg }, `Sales bulk save failed: ${displayMsg}`);
+      return res.status(500).json({ message: `Save failed: ${displayMsg}` });
     }
   });
 
