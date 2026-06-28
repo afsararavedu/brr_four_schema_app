@@ -420,31 +420,56 @@ async function parsePdfInvoice(
   // form a valid bottle count; anything larger in that slot is treated as part
   // of the cases count. This correctly handles packs like 48/180ml where bottles
   // can be 2 digits (0–47), which the old 1-digit-only logic mis-split.
-  const splitQty = (digits: string, qtyPerCase?: number): [number, number] => {
-    if (!digits || digits.length <= 1) return [parseInt(digits) || 0, 0];
-
-    if (qtyPerCase && qtyPerCase > 1) {
-      const maxBottles = qtyPerCase - 1;
-      const bottleDigits = String(maxBottles).length; // e.g. 48 → maxBottles=47 → 2 digits
-      if (digits.length > bottleDigits) {
-        const bottlesCandidate = parseInt(digits.slice(-bottleDigits));
-        if (bottlesCandidate < qtyPerCase) {
-          return [parseInt(digits.slice(0, -bottleDigits)) || 0, bottlesCandidate];
-        }
-      }
-      // bottlesCandidate was >= qtyPerCase (impossible bottle count) — fall back to 1-digit
-      return [parseInt(digits.slice(0, -1)) || 0, parseInt(digits.slice(-1)) || 0];
+  // ── Quantity splitting ─────────────────────────────────────────────────────
+  // Try every possible bottle-digit split (1..maxBottleDigits) and return
+  // all candidates where bottles < qtyPerCase.
+  const splitQtyCandidates = (digits: string, qtyPerCase?: number): Array<{ cases: number; bottles: number; bottleDigits: number }> => {
+    const candidates: Array<{ cases: number; bottles: number; bottleDigits: number }> = [];
+    if (!digits || digits.length <= 1) {
+      candidates.push({ cases: parseInt(digits) || 0, bottles: 0, bottleDigits: 0 });
+      return candidates;
     }
+    // max bottle digits = digits needed for (qtyPerCase-1), capped at digits.length-1
+    const maxBottleDigits = (qtyPerCase && qtyPerCase > 1)
+      ? Math.min(String(qtyPerCase - 1).length, digits.length - 1)
+      : 2;
+    for (let bd = 1; bd <= maxBottleDigits; bd++) {
+      if (digits.length <= bd) continue;
+      const cases = parseInt(digits.slice(0, -bd)) || 0;
+      const bottles = parseInt(digits.slice(-bd)) || 0;
+      if (qtyPerCase && bottles >= qtyPerCase) continue; // invalid bottle count
+      candidates.push({ cases, bottles, bottleDigits: bd });
+    }
+    // Also try the legacy 1-digit fallback
+    const last1 = parseInt(digits.slice(-1)) || 0;
+    if (qtyPerCase && last1 < qtyPerCase) {
+      candidates.push({ cases: parseInt(digits.slice(0, -1)) || 0, bottles: last1, bottleDigits: 1 });
+    }
+    return candidates;
+  };
 
-    // Legacy fallback when pack size is unknown
-    const last2 = parseInt(digits.slice(-2));
-    if (digits.length >= 3 && last2 >= 10 && last2 <= 11)
-      return [parseInt(digits.slice(0, -2)) || 0, last2];
-    return [parseInt(digits.slice(0, -1)) || 0, parseInt(digits.slice(-1)) || 0];
+  // Pick the candidate whose computed total best matches the actual total amount.
+  const pickBestCandidate = (
+    candidates: Array<{ cases: number; bottles: number; bottleDigits: number }>,
+    ratePerCase: number,
+    unitRate: number,
+    totalAmount: number,
+  ): { cases: number; bottles: number } => {
+    if (candidates.length === 0) return { cases: 0, bottles: 0 };
+    if (candidates.length === 1) return { cases: candidates[0].cases, bottles: candidates[0].bottles };
+    let best = candidates[0];
+    let bestDiff = Infinity;
+    for (const c of candidates) {
+      const computed = c.cases * ratePerCase + c.bottles * unitRate;
+      const diff = Math.abs(computed - totalAmount);
+      if (diff < bestDiff) { bestDiff = diff; best = c; }
+    }
+    return { cases: best.cases, bottles: best.bottles };
   };
 
   // Parse a "data line" that has product/pack/size/qty all concatenated, e.g. "BeerG12 / 650 ml680".
-  const parseDataLine = (rl: string): { productType: string; packType: string; packSize: string; qtyCases: number; qtyBottles: number } | null => {
+  // Returns ALL qty candidates + the raw digits so the caller can pick the best one after seeing total.
+  const parseDataLine = (rl: string): { productType: string; packType: string; packSize: string; qtyCandidates: Array<{ cases: number; bottles: number; bottleDigits: number }>; rawDigits: string; qtyPerCase?: number } | null => {
     sizeRe.lastIndex = 0;
     const sm = sizeRe.exec(rl);
     if (!sm) return null;
@@ -460,9 +485,8 @@ async function parsePdfInvoice(
     else { const lc = before.match(/([A-Z])$/); if (lc) { packType = lc[1]; productType = before.slice(0, -1).trim(); } else productType = before.trim(); }
     const packSize = sizeStr.replace(/\s+/g, " ").replace(/\s*\/\s*/g, " / ").trim();
     const rawDigits = after.replace(/\D/g, "");
-    const [qtyCases, qtyBottles] = splitQty(rawDigits, qtyPerCase);
-    console.log(`[PDF splitQty CaseA] size="${packSize}" qpc=${qtyPerCase} after="${after}" digits="${rawDigits}" → cases=${qtyCases} bottles=${qtyBottles}`);
-    return { productType, packType, packSize, qtyCases, qtyBottles };
+    const qtyCandidates = splitQtyCandidates(rawDigits, qtyPerCase);
+    return { productType, packType, packSize, qtyCandidates, rawDigits, qtyPerCase };
   };
 
   // Extract brand name + product/pack type from the text before the size in a Case B line.
@@ -508,6 +532,9 @@ async function parsePdfInvoice(
     let ratePerCase = "", unitRate = "", totalAmount = "";
     const brandParts: string[] = [];
     let rateFound = false, unitRateFound = false;
+    // qty correction: store candidates + financial params for post-pick
+    let qtyCandidates: Array<{ cases: number; bottles: number; bottleDigits: number }> = [];
+    let qtyPerCaseVal: number | undefined;
 
     // Case B: the inline suffix (after brand_no) already contains the size.
     sizeRe.lastIndex = 0;
@@ -518,13 +545,13 @@ async function parsePdfInvoice(
         const before = inlineSuffix.substring(0, sm.index);
         const after  = inlineSuffix.substring(sm.index + sm[0].length);
         const qpcMatch = sm[0].match(/^(\d+)\s*\//);
-        const qtyPerCase = qpcMatch ? parseInt(qpcMatch[1]) : undefined;
+        qtyPerCaseVal = qpcMatch ? parseInt(qpcMatch[1]) : undefined;
         const p = parseBefore(before);
         brandName = p.brandName; productType = p.productType; packType = p.packType;
         packSize = sm[0].replace(/\s+/g, " ").replace(/\s*\/\s*/g, " / ").trim();
         const rawDigitsB = after.replace(/\D/g, "");
-        [qtyCases, qtyBottles] = splitQty(rawDigitsB, qtyPerCase);
-        console.log(`[PDF splitQty CaseB] size="${packSize}" qpc=${qtyPerCase} after="${after}" digits="${rawDigitsB}" → cases=${qtyCases} bottles=${qtyBottles}`);
+        qtyCandidates = splitQtyCandidates(rawDigitsB, qtyPerCaseVal);
+        console.log(`[PDF splitQty CaseB] size="${packSize}" qpc=${qtyPerCaseVal} after="${after}" digits="${rawDigitsB}" candidates=${JSON.stringify(qtyCandidates)}`);
       }
     }
 
@@ -552,7 +579,9 @@ async function parsePdfInvoice(
         const d = parseDataLine(rl);
         if (d) {
           productType = d.productType; packType = d.packType;
-          packSize = d.packSize; qtyCases = d.qtyCases; qtyBottles = d.qtyBottles;
+          packSize = d.packSize;
+          qtyCandidates = d.qtyCandidates;
+          qtyPerCaseVal = d.qtyPerCase;
           continue;
         }
       }
@@ -566,6 +595,20 @@ async function parsePdfInvoice(
     if (!packSize) {
       skippedLines.push(`brand=${brandNumber} inline="${inlineSuffix.substring(0, 60)}"`);
       continue;
+    }
+
+    // ── Pick the best qty split using the financial total ───────────────────────────────────────────
+    const r = parseFloat(ratePerCase) || 0;
+    const u = parseFloat(unitRate) || 0;
+    const t = parseFloat(totalAmount) || 0;
+    if (qtyCandidates.length > 1 && r > 0 && t > 0) {
+      const best = pickBestCandidate(qtyCandidates, r, u, t);
+      qtyCases = best.cases;
+      qtyBottles = best.bottles;
+      console.log(`[PDF qtyPick] brand=${brandNumber} total=${totalAmount} rate=${ratePerCase} unit=${unitRate} picked cases=${qtyCases} bottles=${qtyBottles} from candidates=${JSON.stringify(qtyCandidates)}`);
+    } else if (qtyCandidates.length === 1) {
+      qtyCases = qtyCandidates[0].cases;
+      qtyBottles = qtyCandidates[0].bottles;
     }
 
     parsedOrders.push({
@@ -1485,9 +1528,13 @@ export async function registerRoutes(
     try {
       const input = api.orders.bulkCreate.input.parse(req.body);
       // Normalize invoiceDate to ISO YYYY-MM-DD before storing (date column requires it)
+      // Also sanitize empty-string numeric fields to '0' since PostgreSQL numeric rejects ""
       const normalized = input.map(order => ({
         ...order,
         invoiceDate: order.invoiceDate ? (normalizeInvoiceDate(order.invoiceDate) ?? null) : null,
+        ratePerCase: (order.ratePerCase && String(order.ratePerCase).trim() !== "") ? String(order.ratePerCase) : "0",
+        unitRatePerBottle: (order.unitRatePerBottle && String(order.unitRatePerBottle).trim() !== "") ? String(order.unitRatePerBottle) : "0",
+        totalAmount: (order.totalAmount && String(order.totalAmount).trim() !== "") ? String(order.totalAmount) : "0",
       }));
       const result = await storage.bulkCreateOrders(normalized);
       // Orders are stored only — stock is updated exclusively from "Save Sales"
