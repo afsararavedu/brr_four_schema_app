@@ -1174,7 +1174,7 @@ export default function Sales() {
 
         {/* New Stock */}
         <div className="bg-card rounded-xl border border-border shadow-sm flex overflow-hidden" data-testid="card-new-stock-value">
-          <div className="flex-1 p-3 min-w-0">
+          <div className="flex-1 p-2 min-w-0">
             <p className="text-xs font-medium text-muted-foreground mb-1 truncate">New Stock Value</p>
             <p className="text-lg font-bold text-foreground">{formatCurrency(summary?.newStockValue || 0)}</p>
           </div>
