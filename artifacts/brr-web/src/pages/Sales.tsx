@@ -50,7 +50,7 @@ interface SalesSummary {
   newStockValue: number;
   soldStockValue: number;
   closingBalanceValue: number;
-  categories: Record<string, { opening: number; newStock: number; sold: number; closing: number }>;
+  categories: Record<string, { opening: number; newStock: number; newStockCases: number; newStockBottles: number; sold: number; closing: number }>;
 }
 
 function getTodayLocal(): string {
@@ -198,11 +198,11 @@ export default function Sales() {
     );
 
     // Opening Stock in bottles per type = previous day's totalClosingStock per type
-    const categories: Record<string, { opening: number; newStock: number; sold: number; closing: number }> = {};
+    const categories: Record<string, { opening: number; newStock: number; newStockCases: number; newStockBottles: number; sold: number; closing: number }> = {};
     for (const s of (prevDaySales || [])) {
       const pType = orderTypeMap[s.brandNumber] || "Other";
       if (!categories[pType]) {
-        categories[pType] = { opening: 0, newStock: 0, sold: 0, closing: 0 };
+        categories[pType] = { opening: 0, newStock: 0, newStockCases: 0, newStockBottles: 0, sold: 0, closing: 0 };
       }
       categories[pType].opening += (s.totalClosingStock || 0);
     }
@@ -225,9 +225,11 @@ export default function Sales() {
 
       const pType = orderTypeMap[s.brandNumber] || "Other";
       if (!categories[pType]) {
-        categories[pType] = { opening: 0, newStock: 0, sold: 0, closing: 0 };
+        categories[pType] = { opening: 0, newStock: 0, newStockCases: 0, newStockBottles: 0, sold: 0, closing: 0 };
       }
       categories[pType].newStock += newStockBottlesCalc;
+      categories[pType].newStockCases += newCs;
+      categories[pType].newStockBottles += newBtls;
       categories[pType].sold += soldBtls;
     }
 
@@ -997,9 +999,17 @@ export default function Sales() {
     );
     if (salesSortField) {
       rows = [...rows].sort((a, b) => {
+        // ── Primary sort: Brand No (always) ────────────────────────────────────────────────
+        if (a.brandNumber !== b.brandNumber) {
+          const cmp = a.brandNumber < b.brandNumber ? -1 : 1;
+          // When Brand No itself is the active sort field, respect its direction toggle
+          return (salesSortField === 'brandNumber' && salesSortDir === 'desc') ? -cmp : cmp;
+        }
+
+        // ── Secondary sort: the clicked column (when not Brand No) ──────────────────────
+        if (salesSortField === 'brandNumber') return 0; // no secondary when Brand No is active
         let av: number | string = 0, bv: number | string = 0;
-        if (salesSortField === 'brandNumber') { av = a.brandNumber; bv = b.brandNumber; }
-        else if (salesSortField === 'size') { av = parseFloat(a.size) || 0; bv = parseFloat(b.size) || 0; }
+        if (salesSortField === 'size') { av = parseFloat(a.size) || 0; bv = parseFloat(b.size) || 0; }
         else if (salesSortField === 'mrp') { av = parseFloat(a.mrp as string) || 0; bv = parseFloat(b.mrp as string) || 0; }
         else if (salesSortField === 'soldBottles') { av = a.soldBottles ?? 0; bv = b.soldBottles ?? 0; }
         if (av < bv) return salesSortDir === 'asc' ? -1 : 1;
@@ -1024,6 +1034,20 @@ export default function Sales() {
     (cats["IML"]?.[field] || 0) + (cats["IMFL"]?.[field] || 0);
   const beerCount = (field: keyof typeof cats[string]) =>
     cats["Beer"]?.[field] || 0;
+  // New Stock raw Cases & Bottles (not converted)
+  const beerCases = cats["Beer"]?.newStockCases  || 0;
+  const beerBtls  = cats["Beer"]?.newStockBottles || 0;
+  // Combine IML + IMFL + Duty Paid + Duty Free into one IML line
+  const imlCases  =
+    (cats["IML"]?.newStockCases  || 0) +
+    (cats["IMFL"]?.newStockCases  || 0) +
+    (cats["Duty Paid"]?.newStockCases  || 0) +
+    (cats["Duty Free"]?.newStockCases  || 0);
+  const imlBtls =
+    (cats["IML"]?.newStockBottles || 0) +
+    (cats["IMFL"]?.newStockBottles || 0) +
+    (cats["Duty Paid"]?.newStockBottles || 0) +
+    (cats["Duty Free"]?.newStockBottles || 0);
 
   if (isLoading) {
     return (
@@ -1156,10 +1180,10 @@ export default function Sales() {
           </div>
           <div className="w-px bg-border self-stretch" />
           <div className="flex-1 p-3 min-w-0" data-testid="card-new-stock">
-            <p className="text-xs font-medium text-muted-foreground mb-1 truncate">New Stock in bottles</p>
+            <p className="text-xs font-medium text-muted-foreground mb-1 truncate">New Stock in Cases &amp; Bottles</p>
             <div className="space-y-0.5 text-sm font-semibold text-foreground">
-              <p>IML - {imlCount("newStock")}</p>
-              <p>Beer - {beerCount("newStock")}</p>
+              <p>IML - Cases : {imlCases.toLocaleString()}, Bottles : {imlBtls.toLocaleString()}</p>
+              <p>Beer - Cases : {beerCases.toLocaleString()}, Bottles : {beerBtls.toLocaleString()}</p>
             </div>
           </div>
         </div>
