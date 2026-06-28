@@ -1,0 +1,10 @@
+# Un-ignore the compiled API bundle so Hostinger can git pull to deploy
+!dist/
+!dist/index.mjs
+!dist/pino-worker.mjs
+!dist/pino-file.mjs
+!dist/pino-pretty.mjs
+!dist/thread-stream-worker.mjs
+
+# Keep sourcemaps out of git (large, not needed on server)
+dist/*.map
